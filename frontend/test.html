@@ -1,42 +1,127 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-    <title>WebSocket Test</title>
+    <title>Private Chat Test</title>
 </head>
+
 <body>
 
-<input id="message" placeholder="Type a message">
-<button onclick="sendMessage()">Send</button>
+    <h2>Private Chat</h2>
 
-<ul id="messages"></ul>
+    <h3 id="username"></h3>
 
-<script>
-    const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+    <input id="receiver" placeholder="Receiver Username">
 
-    ws.onopen = () => {
-        console.log("Connected");
-    };
+    <br><br>
 
-    ws.onmessage = (event) => {
-        const li = document.createElement("li");
-        li.textContent = event.data;
-        document.getElementById("messages").appendChild(li);
-    };
+    <input id="message" placeholder="Type a message">
 
-    ws.onerror = (e) => {
-        console.log("Error", e);
-    };
+    <button onclick="broadcastMessage()">
+        Broadcast
+    </button>
 
-    ws.onclose = () => {
-        console.log("Closed");
-    };
+    <button onclick="privateMessage()">
+        Private Message
+    </button>
 
-    function sendMessage() {
-        const input = document.getElementById("message");
-        ws.send(input.value);
-        input.value = "";
-    }
-</script>
+    <h3>Messages</h3>
+
+    <ul id="messages"></ul>
+
+    <script>
+
+        const username = prompt("Enter your username");
+
+        document.getElementById("username").textContent =
+            `Logged in as: ${username}`;
+
+        const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+
+        ws.onopen = () => {
+
+            console.log("Connected");
+
+            ws.send(JSON.stringify({
+                type: "register",
+                username: username
+            }));
+
+        };
+
+        ws.onmessage = (event) => {
+
+            const data = JSON.parse(event.data);
+
+            console.log("Received:", data);
+
+            const li = document.createElement("li");
+
+            li.textContent =
+                `[${data.type}] ${data.sender}: ${data.message}`;
+
+            document.getElementById("messages").appendChild(li);
+
+        };
+
+        ws.onerror = (error) => {
+
+            console.error(error);
+
+        };
+
+        ws.onclose = () => {
+
+            console.log("Disconnected");
+
+        };
+
+        function broadcastMessage() {
+
+            const message =
+                document.getElementById("message").value;
+
+            if (message.trim() === "")
+                return;
+
+            ws.send(JSON.stringify({
+
+                type: "chat",
+                username: username,
+                message: message
+
+            }));
+
+            document.getElementById("message").value = "";
+
+        }
+
+        function privateMessage() {
+
+            const receiver =
+                document.getElementById("receiver").value;
+
+            const message =
+                document.getElementById("message").value;
+
+            if (receiver.trim() === "" || message.trim() === "")
+                return;
+
+            ws.send(JSON.stringify({
+
+                type: "private_chat",
+                username: username,
+                receiver: receiver,
+                message: message
+
+            }));
+
+            document.getElementById("message").value = "";
+
+        }
+
+    </script>
 
 </body>
+
 </html>
