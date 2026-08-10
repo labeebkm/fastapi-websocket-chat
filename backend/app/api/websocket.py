@@ -1,21 +1,47 @@
 import json
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
+from app.core.security import decode_access_token
 from app.schemas.events import (
     ChatEvent,
     PrivateChatEvent,
-    RegisterEvent,
 )
 from app.services.connection_manager import manager
+
 
 router = APIRouter()
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+):
 
-    await manager.connect(websocket)
+    token = websocket.query_params.get("token")
+
+    if not token:
+
+        await websocket.close(code=1008)
+
+        return
+
+    username = decode_access_token(token)
+
+    if username is None:
+
+        await websocket.close(code=1008)
+
+        return
+
+    await manager.connect(
+        websocket,
+        username,
+    )
 
     try:
 
@@ -30,38 +56,18 @@ async def websocket_endpoint(websocket: WebSocket):
             match event_type:
 
                 # -------------------------
-                # Register User
-                # -------------------------
-                case "register":
-
-                    event = RegisterEvent.model_validate(payload)
-
-                    manager.register_user(
-                        event.username,
-                        websocket,
-                    )
-
-                    response = {
-                        "type": "register",
-                        "sender": "Server",
-                        "message": f"{event.username} registered successfully",
-                    }
-
-                    await manager.send_personal_message(
-                        json.dumps(response),
-                        websocket,
-                    )
-
-                # -------------------------
                 # Broadcast Chat
                 # -------------------------
+
                 case "chat":
 
-                    event = ChatEvent.model_validate(payload)
+                    event = ChatEvent.model_validate(
+                        payload
+                    )
 
                     response = {
                         "type": "chat",
-                        "sender": event.username,
+                        "sender": username,
                         "message": event.message,
                     }
 
@@ -72,13 +78,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 # -------------------------
                 # Private Chat
                 # -------------------------
+
                 case "private_chat":
 
-                    event = PrivateChatEvent.model_validate(payload)
+                    event = PrivateChatEvent.model_validate(
+                        payload
+                    )
 
                     response = {
                         "type": "private_chat",
-                        "sender": event.username,
+                        "sender": username,
                         "message": event.message,
                     }
 
@@ -92,7 +101,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         error = {
                             "type": "error",
                             "sender": "Server",
-                            "message": f"{event.receiver} is not online",
+                            "message": (
+                                f"{event.receiver} "
+                                "is not online"
+                            ),
                         }
 
                         await manager.send_personal_message(
@@ -103,19 +115,23 @@ async def websocket_endpoint(websocket: WebSocket):
                 # -------------------------
                 # Unknown Event
                 # -------------------------
+
                 case _:
 
-                    response = {
+                    error = {
                         "type": "error",
                         "sender": "Server",
                         "message": "Unknown event type",
                     }
 
                     await manager.send_personal_message(
-                        json.dumps(response),
+                        json.dumps(error),
                         websocket,
                     )
 
     except WebSocketDisconnect:
 
-        manager.disconnect(websocket)
+        manager.disconnect(
+            websocket,
+            username,
+        )
