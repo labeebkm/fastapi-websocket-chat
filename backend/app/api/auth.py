@@ -1,11 +1,13 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.core.security import (
     create_access_token,
-    hash_password,
     verify_password,
 )
+from app.db.database import get_db
+from app.db.models import User
 
 
 router = APIRouter(
@@ -14,50 +16,43 @@ router = APIRouter(
 )
 
 
-# Temporary in-memory users
-# We will replace this with PostgreSQL later.
-
-users = {
-    "alice": {
-        "username": "alice",
-        "password": hash_password("alice123"),
-    },
-    "bob": {
-        "username": "bob",
-        "password": hash_password("bob123"),
-    },
-}
-
-
 class LoginRequest(BaseModel):
     username: str
     password: str
 
 
 @router.post("/login")
-async def login(request: LoginRequest):
+def login(
+    request: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    # Find the user in PostgreSQL
+    user = (
+        db.query(User)
+        .filter(User.username == request.username)
+        .first()
+    )
 
-    user = users.get(request.username)
-
+    # User does not exist
     if user is None:
-
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
 
+    # Verify the submitted password against the hashed password
     if not verify_password(
         request.password,
-        user["password"],
+        user.password,
     ):
-
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
 
+    # Create JWT
     access_token = create_access_token(
-        username=user["username"]
+        username=user.username
     )
 
     return {

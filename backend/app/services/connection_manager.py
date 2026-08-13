@@ -1,86 +1,79 @@
+from collections import defaultdict
+
 from fastapi import WebSocket
 
 
 class ConnectionManager:
 
     def __init__(self):
-
-        self.active_connections: list[WebSocket] = []
-
-        self.users: dict[str, WebSocket] = {}
+        # username -> set of WebSocket connections
+        self.active_connections: dict[
+            str, set[WebSocket]
+        ] = defaultdict(set)
 
     async def connect(
         self,
-        websocket: WebSocket,
         username: str,
+        websocket: WebSocket,
     ):
-
         await websocket.accept()
 
-        self.active_connections.append(websocket)
-
-        self.users[username] = websocket
-
-        print(f"User connected: {username}")
-
-        print(
-            f"Total connections: "
-            f"{len(self.active_connections)}"
+        self.active_connections[username].add(
+            websocket
         )
 
     def disconnect(
         self,
-        websocket: WebSocket,
         username: str,
+        websocket: WebSocket,
     ):
+        connections = self.active_connections.get(username)
 
-        if websocket in self.active_connections:
+        if not connections:
+            return
 
-            self.active_connections.remove(websocket)
+        connections.discard(websocket)
 
-        if self.users.get(username) == websocket:
+        # Remove username only when all tabs/connections
+        # for that user are disconnected.
+        if not connections:
+            del self.active_connections[username]
 
-            del self.users[username]
+    def is_online(self, username: str) -> bool:
+        return username in self.active_connections
 
-        print(f"User disconnected: {username}")
-
-        print(
-            f"Total connections: "
-            f"{len(self.active_connections)}"
-        )
+    def get_online_users(self) -> list[str]:
+        return list(self.active_connections.keys())
 
     async def send_personal_message(
         self,
         message: str,
         websocket: WebSocket,
     ):
-
         await websocket.send_text(message)
 
-    async def send_private_message(
+    async def send_to_user(
         self,
-        receiver: str,
+        username: str,
         message: str,
-    ) -> bool:
+    ):
+        connections = self.active_connections.get(username, set())
 
-        websocket = self.users.get(receiver)
-
-        if websocket is None:
-
-            return False
-
-        await websocket.send_text(message)
-
-        return True
+        for websocket in list(connections):
+            try:
+                await websocket.send_text(message)
+            except Exception:
+                self.disconnect(username, websocket)
 
     async def broadcast(
         self,
         message: str,
     ):
-
-        for connection in self.active_connections:
-
-            await connection.send_text(message)
+        for username in list(self.active_connections.keys()):
+            await self.send_to_user(
+                username,
+                message,
+            )
 
 
 manager = ConnectionManager()

@@ -30,6 +30,7 @@ async def websocket_endpoint(
 
         return
 
+
     username = decode_access_token(token)
 
     if username is None:
@@ -38,10 +39,43 @@ async def websocket_endpoint(
 
         return
 
+
+    # To check whether the user is already connect through another tab
+    
+    was_online = manager.is_online(username)
+
+    # Register WebSocket connection
     await manager.connect(
         websocket,
         username,
     )
+
+    # Send current online users to the newly connected client
+    online_users = manager.get_online_users()
+
+    presence_sync_event = {
+        "type": "presence_sync",
+        "users": online_users,
+    }
+
+    await manager.send_personal_message(
+        json.dumps(presence_sync_event),
+        websocket,
+    )
+
+    # Notify everyone that the user came online
+    # Only send this if this is the user's first active connection.
+    if not was_online:
+
+        presence_event = {
+            "type": "presence",
+            "username": username,
+            "status": "online",
+        }
+
+        await manager.broadcast(
+            json.dumps(presence_event)
+        )
 
     try:
 
@@ -53,11 +87,8 @@ async def websocket_endpoint(
 
             event_type = payload.get("type")
 
-            match event_type:
 
-                # -------------------------
-                # Broadcast Chat
-                # -------------------------
+            match event_type:
 
                 case "chat":
 
@@ -75,9 +106,6 @@ async def websocket_endpoint(
                         json.dumps(response)
                     )
 
-                # -------------------------
-                # Private Chat
-                # -------------------------
 
                 case "private_chat":
 
@@ -96,6 +124,7 @@ async def websocket_endpoint(
                         message=json.dumps(response),
                     )
 
+                    # Receiver is offline
                     if not sent:
 
                         error = {
@@ -112,9 +141,6 @@ async def websocket_endpoint(
                             websocket,
                         )
 
-                # -------------------------
-                # Unknown Event
-                # -------------------------
 
                 case _:
 
@@ -131,7 +157,26 @@ async def websocket_endpoint(
 
     except WebSocketDisconnect:
 
+        connections = manager.users.get(username)
+
+        had_other_connections = (
+            connections is not None
+            and len(connections) > 1
+        )
+
         manager.disconnect(
             websocket,
             username,
         )
+
+        if not had_other_connections:
+
+            presence_event = {
+                "type": "presence",
+                "username": username,
+                "status": "offline",
+            }
+
+            await manager.broadcast(
+                json.dumps(presence_event)
+            )

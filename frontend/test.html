@@ -1,122 +1,942 @@
 <!DOCTYPE html>
+
 <html>
 
 <head>
-    <title>Private Chat Test</title>
+
+    <title>JWT WebSocket Chat</title>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        input {
+            padding: 8px;
+            margin: 5px 0;
+            width: 250px;
+        }
+
+        button {
+            padding: 8px 14px;
+            margin: 5px 3px 5px 0;
+            cursor: pointer;
+        }
+
+        #status {
+            font-weight: bold;
+        }
+
+        .online {
+            color: green;
+        }
+
+        .message {
+            margin-bottom: 5px;
+        }
+
+        .system {
+            color: gray;
+        }
+
+    </style>
+
 </head>
+
 
 <body>
 
-    <h2>Private Chat</h2>
+    <h2>JWT WebSocket Chat</h2>
 
-    <h3 id="username"></h3>
+    <p id="status">
+        Not logged in
+    </p>
 
-    <input id="receiver" placeholder="Receiver Username">
 
-    <br><br>
+    <hr>
 
-    <input id="message" placeholder="Type a message">
 
-    <button onclick="broadcastMessage()">
+    <!-- =====================================
+         LOGIN
+    ====================================== -->
+
+    <h3>Login</h3>
+
+    <input
+        id="username"
+        placeholder="Username"
+    >
+
+    <br>
+
+    <input
+        id="password"
+        type="password"
+        placeholder="Password"
+    >
+
+    <br>
+
+    <button onclick="login()">
+        Login
+    </button>
+
+
+    <hr>
+
+
+    <!-- =====================================
+         PRIVATE MESSAGE
+    ====================================== -->
+
+    <h3>Private Message</h3>
+
+    <input
+        id="receiver"
+        placeholder="Receiver username"
+    >
+
+    <br>
+
+    <input
+        id="message"
+        placeholder="Message"
+    >
+
+    <br>
+
+    <button onclick="sendBroadcast()">
         Broadcast
     </button>
 
-    <button onclick="privateMessage()">
+    <button onclick="sendPrivateMessage()">
         Private Message
     </button>
+
+    <button onclick="loadChatHistory()">
+        Load Chat History
+    </button>
+
+
+    <hr>
+
+
+    <!-- =====================================
+         ONLINE USERS
+    ====================================== -->
+
+    <h3>Online Users</h3>
+
+    <ul id="onlineUsers"></ul>
+
+
+    <!-- =====================================
+         MESSAGES
+    ====================================== -->
 
     <h3>Messages</h3>
 
     <ul id="messages"></ul>
 
+
     <script>
 
-        const username = prompt("Enter your username");
 
-        document.getElementById("username").textContent =
-            `Logged in as: ${username}`;
+        // =====================================
+        // GLOBAL VARIABLES
+        // =====================================
 
-        const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+        let token = null;
 
-        ws.onopen = () => {
+        let ws = null;
 
-            console.log("Connected");
+        let currentUsername = null;
 
-            ws.send(JSON.stringify({
-                type: "register",
-                username: username
-            }));
 
-        };
+        // Store currently online users
+        const onlineUsers = new Set();
 
-        ws.onmessage = (event) => {
 
-            const data = JSON.parse(event.data);
 
-            console.log("Received:", data);
+        // =====================================
+        // LOGIN
+        // =====================================
 
-            const li = document.createElement("li");
+        async function login() {
 
-            li.textContent =
-                `[${data.type}] ${data.sender}: ${data.message}`;
+            const username =
+                document.getElementById(
+                    "username"
+                ).value.trim();
 
-            document.getElementById("messages").appendChild(li);
 
-        };
+            const password =
+                document.getElementById(
+                    "password"
+                ).value;
 
-        ws.onerror = (error) => {
 
-            console.error(error);
+            if (
+                username === "" ||
+                password === ""
+            ) {
 
-        };
+                alert(
+                    "Enter username and password"
+                );
 
-        ws.onclose = () => {
-
-            console.log("Disconnected");
-
-        };
-
-        function broadcastMessage() {
-
-            const message =
-                document.getElementById("message").value;
-
-            if (message.trim() === "")
                 return;
+            }
 
-            ws.send(JSON.stringify({
 
-                type: "chat",
-                username: username,
-                message: message
+            try {
 
-            }));
+                const response = await fetch(
+                    "http://127.0.0.1:8000/auth/login",
+                    {
+                        method: "POST",
 
-            document.getElementById("message").value = "";
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+
+                        body: JSON.stringify({
+                            username: username,
+                            password: password
+                        })
+                    }
+                );
+
+
+                if (!response.ok) {
+
+                    const error =
+                        await response.json();
+
+                    alert(
+                        error.detail ||
+                        "Login failed"
+                    );
+
+                    return;
+                }
+
+
+                const data =
+                    await response.json();
+
+
+                token =
+                    data.access_token;
+
+
+                currentUsername =
+                    username;
+
+
+                console.log(
+                    "JWT:",
+                    token
+                );
+
+
+                document.getElementById(
+                    "status"
+                ).textContent =
+                    `Logged in as ${username}`;
+
+
+                connectWebSocket();
+
+            }
+
+            catch (error) {
+
+                console.error(
+                    "Login error:",
+                    error
+                );
+
+                alert(
+                    "Unable to connect to server"
+                );
+
+            }
 
         }
 
-        function privateMessage() {
 
-            const receiver =
-                document.getElementById("receiver").value;
+
+        // =====================================
+        // WEBSOCKET CONNECTION
+        // =====================================
+
+        function connectWebSocket() {
+
+            if (!token) {
+
+                alert(
+                    "Login first"
+                );
+
+                return;
+            }
+
+
+            ws = new WebSocket(
+                `ws://127.0.0.1:8000/ws?token=${token}`
+            );
+
+
+            // ---------------------------------
+            // CONNECTION OPENED
+            // ---------------------------------
+
+            ws.onopen = () => {
+
+                console.log(
+                    "WebSocket connected"
+                );
+
+
+                document.getElementById(
+                    "status"
+                ).textContent =
+                    `Connected as ${currentUsername}`;
+
+
+                addSystemMessage(
+                    "WebSocket connected"
+                );
+
+            };
+
+
+
+            // ---------------------------------
+            // MESSAGE RECEIVED
+            // ---------------------------------
+
+            ws.onmessage = (event) => {
+
+                const data =
+                    JSON.parse(event.data);
+
+
+                console.log(
+                    "Received:",
+                    data
+                );
+
+
+                // =================================
+                // PRESENCE EVENT
+                // =================================
+
+                if (
+                    data.type === "presence"
+                ) {
+
+                    handlePresence(data);
+
+                    return;
+                }
+
+
+
+                // =================================
+                // PRESENCE SYNC EVENT
+                // =================================
+
+                if (
+                    data.type === "presence_sync"
+                ) {
+
+                    handlePresenceSync(data);
+
+                    return;
+                }
+
+
+
+                // =================================
+                // CHAT HISTORY
+                // =================================
+
+                if (
+                    data.type === "chat_history"
+                ) {
+
+                    handleChatHistory(data);
+
+                    return;
+                }
+
+
+
+                // =================================
+                // NORMAL CHAT MESSAGE
+                // =================================
+
+                if (
+                    data.type === "chat"
+                ) {
+
+                    addChatMessage(
+                        data.sender,
+                        data.message
+                    );
+
+                    return;
+                }
+
+
+
+                // =================================
+                // PRIVATE CHAT MESSAGE
+                // =================================
+
+                if (
+                    data.type === "private_chat"
+                ) {
+
+                    addPrivateMessage(
+                        data.sender,
+                        data.receiver,
+                        data.message
+                    );
+
+                    return;
+                }
+
+
+
+                // =================================
+                // ERROR
+                // =================================
+
+                if (
+                    data.type === "error"
+                ) {
+
+                    addSystemMessage(
+                        data.message ||
+                        "Unknown server error"
+                    );
+
+                    return;
+                }
+
+
+
+                // =================================
+                // FALLBACK
+                // =================================
+
+                addSystemMessage(
+                    JSON.stringify(data)
+                );
+
+            };
+
+
+
+            // ---------------------------------
+            // WEBSOCKET ERROR
+            // ---------------------------------
+
+            ws.onerror = (error) => {
+
+                console.error(
+                    "WebSocket error:",
+                    error
+                );
+
+
+                addSystemMessage(
+                    "WebSocket error"
+                );
+
+            };
+
+
+
+            // ---------------------------------
+            // WEBSOCKET CLOSED
+            // ---------------------------------
+
+            ws.onclose = () => {
+
+                console.log(
+                    "WebSocket disconnected"
+                );
+
+
+                document.getElementById(
+                    "status"
+                ).textContent =
+                    "WebSocket disconnected";
+
+
+                addSystemMessage(
+                    "WebSocket disconnected"
+                );
+
+            };
+
+        }
+
+
+
+        // =====================================
+        // HANDLE PRESENCE EVENT
+        // =====================================
+
+        function handlePresence(data) {
+
+            const username =
+                data.username;
+
+
+            if (
+                data.status === "online"
+            ) {
+
+                onlineUsers.add(
+                    username
+                );
+
+
+                addSystemMessage(
+                    `${username} is online`
+                );
+
+            }
+
+
+            if (
+                data.status === "offline"
+            ) {
+
+                onlineUsers.delete(
+                    username
+                );
+
+
+                addSystemMessage(
+                    `${username} is offline`
+                );
+
+            }
+
+
+            updateOnlineUsers();
+
+        }
+
+
+
+        // =====================================
+        // HANDLE PRESENCE SYNC
+        // =====================================
+
+        function handlePresenceSync(data) {
+
+            onlineUsers.clear();
+
+
+            if (
+                Array.isArray(data.users)
+            ) {
+
+                data.users.forEach(
+                    (username) => {
+
+                        onlineUsers.add(
+                            username
+                        );
+
+                    }
+                );
+
+            }
+
+
+            updateOnlineUsers();
+
+        }
+
+
+
+        // =====================================
+        // UPDATE ONLINE USER LIST
+        // =====================================
+
+        function updateOnlineUsers() {
+
+            const list =
+                document.getElementById(
+                    "onlineUsers"
+                );
+
+
+            list.innerHTML = "";
+
+
+            onlineUsers.forEach(
+                (username) => {
+
+                    const li =
+                        document.createElement(
+                            "li"
+                        );
+
+
+                    li.className =
+                        "online";
+
+
+                    li.textContent =
+                        `${username} 🟢`;
+
+
+                    list.appendChild(
+                        li
+                    );
+
+                }
+            );
+
+        }
+
+
+
+        // =====================================
+        // DISPLAY SYSTEM MESSAGE
+        // =====================================
+
+        function addSystemMessage(message) {
+
+            const li =
+                document.createElement(
+                    "li"
+                );
+
+
+            li.className =
+                "system";
+
+
+            li.textContent =
+                `[System] ${message}`;
+
+
+            document
+                .getElementById("messages")
+                .appendChild(li);
+
+        }
+
+
+
+        // =====================================
+        // DISPLAY NORMAL CHAT MESSAGE
+        // =====================================
+
+        function addChatMessage(
+            sender,
+            message
+        ) {
+
+            const li =
+                document.createElement(
+                    "li"
+                );
+
+
+            li.className =
+                "message";
+
+
+            li.textContent =
+                `${sender}: ${message}`;
+
+
+            document
+                .getElementById("messages")
+                .appendChild(li);
+
+        }
+
+
+
+        // =====================================
+        // DISPLAY PRIVATE MESSAGE
+        // =====================================
+
+        function addPrivateMessage(
+            sender,
+            receiver,
+            message
+        ) {
+
+            const li =
+                document.createElement(
+                    "li"
+                );
+
+
+            li.className =
+                "message";
+
+
+            li.textContent =
+                `[Private] ${sender} → ${receiver}: ${message}`;
+
+
+            document
+                .getElementById("messages")
+                .appendChild(li);
+
+        }
+
+
+
+        // =====================================
+        // BROADCAST MESSAGE
+        // =====================================
+
+        function sendBroadcast() {
+
+            if (
+                !ws ||
+                ws.readyState !== WebSocket.OPEN
+            ) {
+
+                alert(
+                    "Login and connect first"
+                );
+
+                return;
+            }
+
 
             const message =
-                document.getElementById("message").value;
+                document.getElementById(
+                    "message"
+                ).value.trim();
 
-            if (receiver.trim() === "" || message.trim() === "")
+
+            if (
+                message === ""
+            ) {
+
                 return;
+            }
 
-            ws.send(JSON.stringify({
 
-                type: "private_chat",
-                username: username,
-                receiver: receiver,
+            const event = {
+
+                type: "chat",
+
                 message: message
 
-            }));
+            };
 
-            document.getElementById("message").value = "";
+
+            console.log(
+                "Sending:",
+                event
+            );
+
+
+            ws.send(
+                JSON.stringify(event)
+            );
+
+
+            document.getElementById(
+                "message"
+            ).value = "";
+
+        }
+
+
+
+        // =====================================
+        // PRIVATE MESSAGE
+        // =====================================
+
+        function sendPrivateMessage() {
+
+            if (
+                !ws ||
+                ws.readyState !== WebSocket.OPEN
+            ) {
+
+                alert(
+                    "Login and connect first"
+                );
+
+                return;
+            }
+
+
+            const receiver =
+                document.getElementById(
+                    "receiver"
+                ).value.trim();
+
+
+            const message =
+                document.getElementById(
+                    "message"
+                ).value.trim();
+
+
+            if (
+                receiver === "" ||
+                message === ""
+            ) {
+
+                return;
+            }
+
+
+            const event = {
+
+                type: "private_chat",
+
+                receiver: receiver,
+
+                message: message
+
+            };
+
+
+            console.log(
+                "Sending:",
+                event
+            );
+
+
+            ws.send(
+                JSON.stringify(event)
+            );
+
+
+            document.getElementById(
+                "message"
+            ).value = "";
+
+        }
+
+
+
+        // =====================================
+        // LOAD CHAT HISTORY
+        // =====================================
+
+        function loadChatHistory() {
+
+            if (
+                !ws ||
+                ws.readyState !== WebSocket.OPEN
+            ) {
+
+                alert(
+                    "Login and connect first"
+                );
+
+                return;
+            }
+
+
+            const receiver =
+                document.getElementById(
+                    "receiver"
+                ).value.trim();
+
+
+            if (
+                receiver === ""
+            ) {
+
+                alert(
+                    "Enter receiver username"
+                );
+
+                return;
+            }
+
+
+            const event = {
+
+                type: "get_chat_history",
+
+                receiver: receiver
+
+            };
+
+
+            console.log(
+                "Requesting chat history:",
+                event
+            );
+
+
+            ws.send(
+                JSON.stringify(event)
+            );
+
+        }
+
+
+
+        // =====================================
+        // HANDLE CHAT HISTORY
+        // =====================================
+
+        function handleChatHistory(data) {
+
+            const messages =
+                data.messages || [];
+
+
+            addSystemMessage(
+                `Loaded ${messages.length} previous messages`
+            );
+
+
+            messages.forEach(
+                (message) => {
+
+                    const sender =
+                        message.sender ||
+                        message.sender_username;
+
+
+                    const receiver =
+                        message.receiver ||
+                        message.receiver_username;
+
+
+                    const content =
+                        message.message ||
+                        message.content;
+
+
+                    addPrivateMessage(
+                        sender,
+                        receiver,
+                        content
+                    );
+
+                }
+            );
 
         }
 
