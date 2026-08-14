@@ -13,8 +13,8 @@ class ConnectionManager:
 
     async def connect(
         self,
-        username: str,
         websocket: WebSocket,
+        username: str,
     ):
         await websocket.accept()
 
@@ -24,8 +24,8 @@ class ConnectionManager:
 
     def disconnect(
         self,
-        username: str,
         websocket: WebSocket,
+        username: str,
     ):
         connections = self.active_connections.get(username)
 
@@ -63,7 +63,19 @@ class ConnectionManager:
             try:
                 await websocket.send_text(message)
             except Exception:
-                self.disconnect(username, websocket)
+                self.disconnect(websocket, username)
+
+    async def send_private_message(
+        self,
+        receiver: str,
+        message: str,
+    ) -> bool:
+        """Send to a user if online. Returns whether it was delivered."""
+        if not self.is_online(receiver):
+            return False
+
+        await self.send_to_user(receiver, message)
+        return True
 
     async def broadcast(
         self,

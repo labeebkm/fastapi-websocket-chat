@@ -7,10 +7,13 @@ from fastapi import (
 )
 
 from app.core.security import decode_access_token
+from app.db.database import SessionLocal
 from app.schemas.events import (
     ChatEvent,
     PrivateChatEvent,
+    GetChatHistoryEvent,
 )
+from app.services import chat_service
 from app.services.connection_manager import manager
 
 
@@ -41,7 +44,7 @@ async def websocket_endpoint(
 
 
     # To check whether the user is already connect through another tab
-    
+
     was_online = manager.is_online(username)
 
     # Register WebSocket connection
@@ -119,6 +122,28 @@ async def websocket_endpoint(
                         "message": event.message,
                     }
 
+                    # Persist the message regardless of whether
+                    # the receiver is currently online.
+                    with SessionLocal() as db:
+                        try:
+                            chat_service.save_message(
+                                db,
+                                sender_username=username,
+                                receiver_username=event.receiver,
+                                content=event.message,
+                            )
+                        except ValueError:
+                            error = {
+                                "type": "error",
+                                "sender": "Server",
+                                "message": f"{event.receiver} does not exist",
+                            }
+                            await manager.send_personal_message(
+                                json.dumps(error),
+                                websocket,
+                            )
+                            continue
+
                     sent = await manager.send_private_message(
                         receiver=event.receiver,
                         message=json.dumps(response),
@@ -142,6 +167,46 @@ async def websocket_endpoint(
                         )
 
 
+                case "get_chat_history":
+
+                    event = GetChatHistoryEvent.model_validate(
+                        payload
+                    )
+
+                    with SessionLocal() as db:
+                        history, has_more = chat_service.get_message_history(
+                            db,
+                            user_a=username,
+                            user_b=event.receiver,
+                            before_id=event.before_id,
+                            limit=event.limit,
+                        )
+
+                        messages = [
+                            {
+                                "id": msg.id,
+                                "sender": msg.sender.username,
+                                "receiver": msg.receiver.username,
+                                "message": msg.content,
+                                "created_at": msg.created_at.isoformat(),
+                            }
+                            for msg in history
+                        ]
+
+                    response = {
+                        "type": "chat_history",
+                        "messages": messages,
+                        "has_more": has_more,
+                        # send this back as the next before_id for
+                        # "load older messages"
+                        "oldest_id": messages[0]["id"] if messages else None,
+                    }
+
+                    await manager.send_personal_message(
+                        json.dumps(response),
+                        websocket,
+                    )
+
                 case _:
 
                     error = {
@@ -157,7 +222,7 @@ async def websocket_endpoint(
 
     except WebSocketDisconnect:
 
-        connections = manager.users.get(username)
+        connections = manager.active_connections.get(username)
 
         had_other_connections = (
             connections is not None
