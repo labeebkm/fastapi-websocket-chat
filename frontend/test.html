@@ -138,6 +138,10 @@
 
     <h3>Messages</h3>
 
+    <button id="loadOlderBtn" onclick="loadOlderMessages()" style="display:none;">
+        Load Older Messages
+    </button>
+
     <ul id="messages"></ul>
 
 
@@ -157,6 +161,14 @@
 
         // Store currently online users
         const onlineUsers = new Set();
+
+
+        // Sliding-window pagination state for chat history
+        let historyReceiver = null;
+
+        let oldestMessageId = null;
+
+        let hasMoreHistory = false;
 
 
 
@@ -837,7 +849,7 @@
 
 
         // =====================================
-        // LOAD CHAT HISTORY
+        // LOAD CHAT HISTORY (fresh / first window)
         // =====================================
 
         function loadChatHistory() {
@@ -873,6 +885,19 @@
             }
 
 
+            // Fresh load — reset the sliding window for this receiver
+            historyReceiver = receiver;
+
+            oldestMessageId = null;
+
+            hasMoreHistory = false;
+
+
+            document.getElementById(
+                "loadOlderBtn"
+            ).style.display = "none";
+
+
             const event = {
 
                 type: "get_chat_history",
@@ -897,6 +922,59 @@
 
 
         // =====================================
+        // LOAD OLDER MESSAGES (slide window back)
+        // =====================================
+
+        function loadOlderMessages() {
+
+            if (
+                !ws ||
+                ws.readyState !== WebSocket.OPEN
+            ) {
+
+                alert(
+                    "Login and connect first"
+                );
+
+                return;
+            }
+
+
+            if (
+                !historyReceiver ||
+                oldestMessageId === null
+            ) {
+
+                return;
+            }
+
+
+            const event = {
+
+                type: "get_chat_history",
+
+                receiver: historyReceiver,
+
+                before_id: oldestMessageId
+
+            };
+
+
+            console.log(
+                "Requesting older messages:",
+                event
+            );
+
+
+            ws.send(
+                JSON.stringify(event)
+            );
+
+        }
+
+
+
+        // =====================================
         // HANDLE CHAT HISTORY
         // =====================================
 
@@ -907,8 +985,56 @@
 
 
             addSystemMessage(
-                `Loaded ${messages.length} previous messages`
+                `Loaded ${messages.length} messages`
             );
+
+
+            prependMessagesToList(
+                messages
+            );
+
+
+            hasMoreHistory =
+                !!data.has_more;
+
+
+            if (
+                messages.length > 0
+            ) {
+
+                oldestMessageId =
+                    data.oldest_id;
+
+            }
+
+
+            document.getElementById(
+                "loadOlderBtn"
+            ).style.display =
+                hasMoreHistory
+                    ? "inline-block"
+                    : "none";
+
+        }
+
+
+
+        // =====================================
+        // PREPEND OLDER MESSAGES TO TOP OF LIST
+        // =====================================
+
+        function prependMessagesToList(messages) {
+
+            const list =
+                document.getElementById(
+                    "messages"
+                );
+
+            const referenceNode =
+                list.firstChild;
+
+            const fragment =
+                document.createDocumentFragment();
 
 
             messages.forEach(
@@ -918,24 +1044,38 @@
                         message.sender ||
                         message.sender_username;
 
-
                     const receiver =
                         message.receiver ||
                         message.receiver_username;
-
 
                     const content =
                         message.message ||
                         message.content;
 
 
-                    addPrivateMessage(
-                        sender,
-                        receiver,
-                        content
+                    const li =
+                        document.createElement(
+                            "li"
+                        );
+
+                    li.className =
+                        "message";
+
+                    li.textContent =
+                        `[Private] ${sender} → ${receiver}: ${content}`;
+
+
+                    fragment.appendChild(
+                        li
                     );
 
                 }
+            );
+
+
+            list.insertBefore(
+                fragment,
+                referenceNode
             );
 
         }
